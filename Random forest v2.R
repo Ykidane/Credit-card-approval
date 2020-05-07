@@ -12,6 +12,8 @@ library(grid)
 library(ggridges)
 library(ggthemes)
 library(pander)
+library(xgboost)
+library(yardstick)
 #library(Information)
 
 #==========================================================
@@ -104,7 +106,10 @@ rf_balTune
 
 
 pred_rf<- predict(rf_balTune, Testset)
-confusionMatrix(pred_rf, Testset$Risk)
+conM<-confusionMatrix(pred_rf, Testset$Risk)
+fourfoldplot(conM$table, color = c("#34eb89", "#6699CC"), conf.level = .95,
+             std = c("margins", "ind.max", "all.max"), margin = c(1,2),
+             space = 0.2, main = "Confusion matrix" )
 
 p1<-roc.curve(Testset$Risk, pred_rf)
 #=========================================================
@@ -134,12 +139,14 @@ pd3<- rf_balTune%>%
 y<-Trainset%>%select(-Risk)
 x<-Testset%>%select(-Risk)%>%sample_n(size =100)
 explainer <- lime(y, rf_balTune)
-explanation<- explain(x, explainer, labels = "Yes", n_features = 7)
+# feature selection method tree 
+explanation<- explain(x, explainer, labels = "Yes", n_features = 7, 
+                      feature_select="trees")
 explanation
 
 L1<-plot_explanations(explanation)
 
-L2<-plot_features(explanation, ncol = 2, cases =19)
+L2<-plot_features(explanation, ncol = 2, cases =1:4)
 
 #=========================================================
 
