@@ -5,16 +5,11 @@ library(gmodels)
 library(mosaic)
 library(caret)
 library(ROSE)
-library(ranger)
 library(pdp)
 library(gridExtra)
 library(grid)
 library(ggridges)
 library(ggthemes)
-library(pander)
-library(xgboost)
-library(yardstick)
-#library(Information)
 
 #==========================================================
 #creating response varible
@@ -32,153 +27,182 @@ new_credit<- merge(application_record, new_rec, by="ID")
 new_credit$Risk<-as.factor(new_credit$Risk)
 new_credit11=new_credit
 
-#=========================================================
-#Renaming columns
 
 #=========================================================
 new_credit11$FLAG_MOBIL<-as.factor(new_credit11$FLAG_MOBIL)
 new_credit11$FLAG_WORK_PHONE<-as.factor(new_credit11$FLAG_WORK_PHONE)
 new_credit11$FLAG_PHONE<-as.factor(new_credit11$FLAG_PHONE)
 new_credit11$FLAG_EMAIL<-as.factor(new_credit11$FLAG_EMAIL)
-
 #==========================================================
-#Missing data(data which is null, FLAG_MOBIL_PHONE doesn't contrbiute), 
-#bad cardinality(high number of rows from two tables), 
-#outliers 
-#Imputation: replacing null value (measure of centeral tendency. i.e mean)
-
-
-
-#==========================================================
-#Information value and weight of evidence 
-#factor_vars <- c ("CODE_GENDER", "FLAG_OWN_CAR", "FLAG_OWN_REALTY", "NAME_INCOME_TYPE",
-#                  "NAME_EDUCATION_TYPE", "NAME_FAMILY_STATUS", "NAME_HOUSING_TYPE", "OCCUPATION_TYPE")  # get all categorical variables
-
-#all_iv <- data.frame(VARS=factor_vars, IV=numeric(length(factor_vars)), STRENGTH=character(length(factor_vars)), stringsAsFactors = F)  # init output dataframe
-#for (factor_var in factor_vars){
- # all_iv[all_iv$VARS == factor_var, "IV"] <-IV(X=new_credit11[, factor_var], Y=new_credit11$Risk)
-  #all_iv[all_iv$VARS == factor_var, "STRENGTH"] <- attr(IV(X=new_credit11[, factor_var], Y=new_credit11$Risk), "howgood")
-#}
-#all_iv <- all_iv[order(-all_iv$IV), ]  # sort
-#variable reduction via information value and weight of evidence
-#FLAG_MOBIL is less 
-
+#Shows class imbalance
 plot1 <- new_credit11 %>%
   ggplot(aes(x = Risk, fill = Risk)) +
   scale_fill_tableau() +
   geom_bar(alpha = 0.8) 
-  #guides(fill = FALSE)
- tbl_df(new_credit11)
- 
- new_credit11 %>%
-   summarize(mean_cty = mean(CNT_FAM_MEMBERS), 
-             st_dev_cty = sd(CNT_FAM_MEMBERS)) %>% 
-              pander()
- 
- new_credit11<-select(new_credit11, -FLAG_MOBIL,-ID)
-
+#guides(fill = FALSE)
+tbl_df(new_credit11)
+#=========================================================
+new_credit11<-select(new_credit11, -FLAG_MOBIL,-ID)
 #==========================#===============================
 #Splitting to train and test
-
 set.seed(55)
 in_training <- createDataPartition(new_credit11$Risk, p = .70, list = FALSE)
 Trainset <- new_credit11[in_training, ]
 Testset <- new_credit11[-in_training, ]
-
-#==========================#========================================
+#==========================#==================================================
+#Sampling Method
 rover<- ovun.sample(Risk~., data = Trainset, method = "over", N=45034, seed = 123)$data
 runder<- ovun.sample(Risk~., data = Trainset, method = "under", N=6008, seed = 123)$data
 rboth<- ovun.sample(Risk~., data = Trainset, method = "both", p=0.5, seed = 123)$data
 #=============================#===================================================================
-#Training and Prediction
+#Training, Prediction and Evaluation
 
 fit_control <- trainControl(
   method = "cv",
-  number = 10
-  )
+  number = 10,
+  search = "random"
+)
+
+gridd <- expand.grid(mtry = seq(5,8,14) )
+
 set.seed(45)
 rf_balTune <- train(Risk ~ ., 
                     data = rover,
                     method= "rf",
-                    tuneGrid=data.frame(mtry=5),
+                    tuneGrid=gridd,
                     trControl = fit_control)
 rf_balTune
+#==================================================
+#Tunning random forest by changing mtry=3,5,10,15
+rf_Tune <- train(Risk ~ ., 
+                 data = rover,
+                 method= "rf",
+                 tuneGrid=data.frame(mtry=10),
+                 trControl = fit_control)
+rf_Tune
+rf_Tune1 <- train(Risk ~ ., 
+                  data = rover,
+                  method= "rf",
+                  tuneGrid=data.frame(mtry=15),
+                  trControl = fit_control)
+rf_Tune1
 
+rf_Tune2 <- train(Risk ~ ., 
+                  data = rover,
+                  method= "rf",
+                  tuneGrid=data.frame(mtry=3),
+                  trControl = fit_control)
+rf_Tune2
+rf_Tune3 <- train(Risk ~ ., 
+                  data = rover,
+                  method= "rf",
+                  trControl = fit_control)
+rf_Tune3
+rf_Tune4 <- train(Risk ~ ., 
+                  data = runder,
+                  method= "rf",
+                  trControl = fit_control)
+rf_Tune4
 
 pred_rf<- predict(rf_balTune, Testset)
-conM<-confusionMatrix(pred_rf, Testset$Risk)
-fourfoldplot(conM$table, color = c("#34eb89", "#6699CC"), conf.level = .95,
-             std = c("margins", "ind.max", "all.max"), margin = c(1,2),
-             space = 0.2, main = "Confusion matrix" )
-
+confusionMatrix(pred_rf, Testset$Risk)
 p1<-roc.curve(Testset$Risk, pred_rf)
 #=========================================================
-rfmodel <- randomForest(Risk~., data = rover,importance = TRUE)
-plot(rfmodel$err.rate)
+rf_balunder <- train(Risk ~ ., 
+                     data = runder,
+                     method= "rf",
+                     tuneGrid=data.frame(mtry=5),
+                     trControl = fit_control)
+rf_balunder
 
-plot(confusionM)
+pred_under<- predict(rf_balunder, Testset)
+confusionMatrix(pred_under, Testset$Risk)
+p3<-roc.curve(Testset$Risk, pred_under)
+#===========================================================
+rf_both <- train(Risk ~ ., 
+                 data = rboth,
+                 method= "rf",
+                 tuneGrid=data.frame(mtry=5),
+                 trControl = fit_control)
+rf_both
 
-#Error rate
+pred_both<- predict(rf_both, Testset)
+confusionMatrix(pred_both, Testset$Risk)
+p4<-roc.curve(Testset$Risk, pred_both)
+#===========================================================
+rfmodel <- randomForest(Risk~., data = rover, mtry=4, ntree=400,
+                        importance = TRUE)
+rfmodel
+pred_f<- predict(rfmodel, Testset)
+confusionMatrix(pred_f, Testset$Risk)
+p2<-roc.curve(Testset$Risk, pred_f)
+
+#Retrain random forest
+xx<-Trainset%>%select(OCCUPATION_TYPE,AMT_INCOME_TOTAL, DAYS_BIRTH,DAYS_EMPLOYED,
+                      NAME_INCOME_TYPE,NAME_EDUCATION_TYPE, NAME_FAMILY_STATUS,
+                      NAME_HOUSING_TYPE,Risk)
+yy<-Testset%>%select(OCCUPATION_TYPE,AMT_INCOME_TOTAL, DAYS_BIRTH,DAYS_EMPLOYED,
+                     NAME_INCOME_TYPE,NAME_EDUCATION_TYPE, NAME_FAMILY_STATUS,
+                     NAME_HOUSING_TYPE,Risk)
+rover1<- ovun.sample(Risk~., data = xx, method = "over", N=45034, seed = 123)$data
+
+rfmodel2 <- randomForest(Risk~., data = rover1,importance = TRUE)
+rfmodel2
+pred_f1<- predict(rfmodel2, yy)
+confusionMatrix(pred_f1, yy$Risk)
+#===========================================================
+#Trainset[,-17]- all rows and all columns without the response V
+# Trainset[,17]- all rows and the response variable
+t <- tuneRF(Trainset[,-17], Trainset[,17],
+            stepFactor = 0.5,
+            plot = TRUE,
+            ntreeTry = 400,
+            trace = TRUE,
+            improve = 0.05)
 #============================================================
- var_imp<-varImp(rf_balTune, scale = FALSE)
- plot(var_imp, top = 20)
- filterVarImp(Trainset, Trainset$Risk)
+imp<-varImp(rf_balTune, useModel = TRUE, nonpara = TRUE)
+plot(imp, top = 15)
+filterVarImp(Trainset, Trainset$Risk)
+#==========================================================
 #paritial dependencies plot
-pd1<- partial(rf_balTune, pred.var = "AMT_INCOME_TOTAL", plot = TRUE,
-                                   rug = TRUE)
-pd2<- partial(rf_balTune, pred.var = "AMT_INCOME_TOTAL", plot = TRUE,
-        plot.engine = "ggplot2")
-grid.arrange(pd1, pd2, ncol=2)
+pd1<- partial(rf_balTune, pred.var = "AMT_INCOME_TOTAL", which.class = "Yes",plot = TRUE, rug = TRUE)
+pd2<- partial(rf_balTune, pred.var = "DAYS_EMPLOYED", which.class = "Yes",plot = TRUE, rug = TRUE)
+pd3<- partial(rf_balTune, pred.var = "DAYS_BIRTH", which.class = "Yes",plot = TRUE, rug = TRUE)
+grid.arrange(pd1, pd2, pd3, ncol=2)
 
-pd3<- rf_balTune%>%
-      partial(pred.var="AMT_INCOME_TOTAL")%>%
-      plotPartial(smooth=TRUE, lwd=2, ylab= expression(f(AMT_INCOME_TOTAL)),
-                  main= "AMT_INCOME PDP")
-#=====================#==================================
+#pd4<- partial(rf_balTune, pred.var = "OCCUPATION_TYPE", plot = TRUE, rug = TRUE, which.class = "Yes")
+pd5<- partial(rf_balTune, pred.var = "NAME_HOUSING_TYPE", plot = TRUE, rug = TRUE, which.class = "No")
+pd6<- partial(rf_balTune, pred.var = "NAME_FAMILY_STATUS", plot = TRUE, rug = TRUE, which.class = "No")
+pd7<- partial(rf_balTune, pred.var = "NAME_EDUCATION_TYPE", plot = TRUE, rug = TRUE, which.class = "No")
+
+grid.arrange(pd5, pd6, pd7, ncol=1)
+
+
+pd <- partial(rfmodel, pred.var = c("AMT_INCOME_TOTAL", "CODE_GENDER"), 
+              plot = TRUE, which.class = "Yes", type = "classification")
+
+pdd <- partial(rfmodel, pred.var = c("AMT_INCOME_TOTAL", "NAME_HOUSING_TYPE"), 
+               plot = TRUE, which.class = "Yes", type = "classification")
+
+pdd1 <- partial(rfmodel, pred.var = c("AMT_INCOME_TOTAL", "NAME_FAMILY_STATUS"), 
+                plot = TRUE, which.class = "Yes", type = "classification")
+
+pdd2 <- partial(rfmodel, pred.var = c("AMT_INCOME_TOTAL", "OCCUPATION_TYPE"), 
+                plot = TRUE, which.class = "Yes", type = "classification")
+#=====================#========================================
 #LIME explanation 
 y<-Trainset%>%select(-Risk)
-x<-Testset%>%select(-Risk)%>%sample_n(size =100)
+x<-Testset%>%select(-Risk)%>%sample_n(size =500)
+
 explainer <- lime(y, rf_balTune)
-# feature selection method tree 
-explanation<- explain(x, explainer, labels = "Yes", n_features = 7, 
-                      feature_select="trees")
+explanation<- explain(x, explainer, labels = "Yes", n_features = 5, feature_select = "highest_weight")
+explanation1<- explain(x, explainer, labels = "Yes", n_features = 5, feature_select = "tree")
+
 explanation
 
-L1<-plot_explanations(explanation)
+L1<-plot_explanations(explanation1)
 
-L2<-plot_features(explanation, ncol = 2, cases =1:4)
+L2<-plot_features(explanation, ncol = 2, cases =79)
+L3<-plot_features(explanation1, ncol = 2, cases =79)
 
-#=========================================================
-
-
-
-
-
-
-
-
-
-#save the plot in a variable and that will help you on saving time
-# Tuning the parameter 
-#Looking at the dataset in kaggle
-# Tune mtry, ntry, numbers on the traincontrol, 
-# Have more time after hand in 
-# Lime implementation mathematically...implement 
-#it to the model that you have and don't need more as
-#in the package
-# PCA on the plote is because of the preprocess on the train 
-#Trying all the months instead of only 6 months 
-# Look how I create the response variable 
-# There are a big number on the confusion matrix because I use 
-# a testset which is not sampled ...maybe check it by sampling 
-#the testset before having the confusion matrix 
-#Finding the best tree in the random forest on the kaggle 
-#kernal that the guy he has becausehe has good accuracy.
-
-
-
-
-
-#Notes from Kaggle dataset
-# 1. overdue more than 60 days are "1" else "0"
-# 
+#===============================================================
